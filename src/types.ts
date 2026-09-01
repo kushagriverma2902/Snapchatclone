@@ -93,6 +93,7 @@ export interface CreatedSnap {
   filterName?: string;
   hasAudio?: boolean;
   recordedVideoBlob?: Blob;
+  frameMode?: 'fill' | 'fit' | 'square' | 'classic' | 'wide';
 }
 
 export interface ReceivedSnap {
@@ -113,6 +114,7 @@ export interface ReceivedSnap {
   drawings?: DrawingPath[];
   stickers?: StickerItem[];
   filterName?: string;
+  frameMode?: 'fill' | 'fit' | 'square' | 'classic' | 'wide';
 }
 
 export interface StorySegment {
@@ -126,6 +128,7 @@ export interface StorySegment {
   drawings?: DrawingPath[];
   stickers?: StickerItem[];
   filterName?: string;
+  frameMode?: 'fill' | 'fit' | 'square' | 'classic' | 'wide';
   viewers: {
     userId: string;
     userName: string;

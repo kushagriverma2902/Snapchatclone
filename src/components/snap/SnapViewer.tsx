@@ -83,61 +83,90 @@ export const SnapViewer: React.FC<SnapViewerProps> = ({
       onTouchStart={() => setIsPaused(true)}
       onTouchEnd={() => setIsPaused(false)}
     >
-      {/* Background Media */}
-      <div className="absolute inset-0 w-full h-full">
-        <img
-          src={snap.mediaUrl}
-          alt="Snap Media"
-          referrerPolicy="no-referrer"
-          className="w-full h-full object-cover"
-        />
+      {/* Background Media with Dynamic Frame Sizing */}
+      <div className="absolute inset-0 w-full h-full flex items-center justify-center overflow-hidden bg-neutral-950">
+        {/* Ambient Blur for framed snaps */}
+        {snap.frameMode && snap.frameMode !== 'fill' && (
+          <div className="absolute inset-0 w-full h-full overflow-hidden">
+            <img
+              src={snap.mediaUrl}
+              alt="Ambient Glow"
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover filter blur-3xl scale-125 opacity-40 brightness-75"
+            />
+          </div>
+        )}
 
-        {/* Text Overlays */}
-        {snap.overlays?.map((o) => (
-          <div
-            key={o.id}
-            className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none"
-            style={{
-              left: `${o.x}%`,
-              top: `${o.y}%`,
-              transform: `translate(-50%, -50%) rotate(${o.rotation}deg)`,
-            }}
-          >
+        {/* Framed Media Container */}
+        <div
+          className={`relative transition-all duration-300 flex items-center justify-center overflow-hidden ${
+            !snap.frameMode || snap.frameMode === 'fill'
+              ? 'w-full h-full'
+              : snap.frameMode === 'fit'
+              ? 'w-full h-full max-w-full max-h-full p-2'
+              : snap.frameMode === 'square'
+              ? 'w-[90%] aspect-square rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-white/20'
+              : snap.frameMode === 'classic'
+              ? 'w-[88%] aspect-[3/4] rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-white/20'
+              : 'w-[96%] aspect-[16/9] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-white/20'
+          }`}
+        >
+          <img
+            src={snap.mediaUrl}
+            alt="Snap Media"
+            referrerPolicy="no-referrer"
+            className={`w-full h-full transition-all duration-300 ${
+              snap.frameMode === 'fit' ? 'object-contain' : 'object-cover'
+            }`}
+          />
+
+          {/* Text Overlays */}
+          {snap.overlays?.map((o) => (
             <div
-              className={`px-4 py-2 text-center font-bold ${
-                o.bgStyle === 'banner'
-                  ? 'bg-black/70 backdrop-blur-xs w-screen max-w-full'
-                  : o.bgStyle === 'pill'
-                  ? 'bg-black/85 rounded-full px-5 py-2'
-                  : o.bgStyle === 'neon'
-                  ? 'bg-cyan-950/80 border border-cyan-400 text-cyan-300 rounded-xl px-4 py-2'
-                  : ''
-              }`}
+              key={o.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none"
               style={{
-                color: o.color,
-                fontSize: `${o.fontSize}px`,
-                fontFamily: o.fontFamily === 'syne' ? 'Syne, sans-serif' : 'Plus Jakarta Sans, sans-serif',
+                left: `${o.x}%`,
+                top: `${o.y}%`,
+                transform: `translate(-50%, -50%) rotate(${o.rotation}deg)`,
               }}
             >
-              {o.text}
+              <div
+                className={`px-4 py-2 text-center font-bold ${
+                  o.bgStyle === 'banner'
+                    ? 'bg-black/70 backdrop-blur-xs w-screen max-w-full'
+                    : o.bgStyle === 'pill'
+                    ? 'bg-black/85 rounded-full px-5 py-2'
+                    : o.bgStyle === 'neon'
+                    ? 'bg-cyan-950/80 border border-cyan-400 text-cyan-300 rounded-xl px-4 py-2'
+                    : ''
+                }`}
+                style={{
+                  color: o.color,
+                  fontSize: `${o.fontSize}px`,
+                  fontFamily: o.fontFamily === 'syne' ? 'Syne, sans-serif' : 'Plus Jakarta Sans, sans-serif',
+                }}
+              >
+                {o.text}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
 
-        {/* Stickers */}
-        {snap.stickers?.map((s) => (
-          <div
-            key={s.id}
-            className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none"
-            style={{
-              left: `${s.x}%`,
-              top: `${s.y}%`,
-              transform: `translate(-50%, -50%) scale(${s.scale}) rotate(${s.rotation}deg)`,
-            }}
-          >
-            <div className="text-5xl">{s.emojiOrUrl}</div>
-          </div>
-        ))}
+          {/* Stickers */}
+          {snap.stickers?.map((s) => (
+            <div
+              key={s.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+              style={{
+                left: `${s.x}%`,
+                top: `${s.y}%`,
+                transform: `translate(-50%, -50%) scale(${s.scale}) rotate(${s.rotation}deg)`,
+              }}
+            >
+              <div className="text-5xl">{s.emojiOrUrl}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Screenshot Alert Banner */}

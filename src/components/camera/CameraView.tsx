@@ -80,6 +80,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const fallbackImgRef = useRef<HTMLImageElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -88,6 +89,59 @@ export const CameraView: React.FC<CameraViewProps> = ({
   const isHoldingRef = useRef<boolean>(false);
   const holdTimeoutRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Helper to compute true aspect-ratio cover crop coordinates without distortion or squishing
+  const getCaptureGeometry = (
+    containerEl: HTMLElement | null,
+    mediaEl: HTMLVideoElement | HTMLImageElement | null
+  ) => {
+    const cw = containerEl?.clientWidth || 390;
+    const ch = containerEl?.clientHeight || 844;
+    const targetRatio = cw / ch;
+
+    // Crisp high-definition output target (e.g. 1080x1920 or native aspect)
+    let outWidth = 1080;
+    let outHeight = 1920;
+
+    if (targetRatio <= 1) {
+      outWidth = 1080;
+      outHeight = Math.max(1080, Math.round(1080 / targetRatio));
+    } else {
+      outHeight = 1080;
+      outWidth = Math.max(1080, Math.round(1080 * targetRatio));
+    }
+
+    const canvasRatio = outWidth / outHeight;
+
+    let srcX = 0;
+    let srcY = 0;
+    let srcW = outWidth;
+    let srcH = outHeight;
+
+    if (mediaEl) {
+      const mw = mediaEl instanceof HTMLVideoElement ? (mediaEl.videoWidth || 1280) : (mediaEl.naturalWidth || 1080);
+      const mh = mediaEl instanceof HTMLVideoElement ? (mediaEl.videoHeight || 720) : (mediaEl.naturalHeight || 1920);
+
+      if (mw > 0 && mh > 0) {
+        const mediaRatio = mw / mh;
+        if (mediaRatio > canvasRatio) {
+          // Media is wider than container view -> crop left & right
+          srcW = mh * canvasRatio;
+          srcH = mh;
+          srcX = (mw - srcW) / 2;
+          srcY = 0;
+        } else {
+          // Media is taller/narrower -> crop top & bottom
+          srcW = mw;
+          srcH = mw / canvasRatio;
+          srcX = 0;
+          srcY = (mh - srcH) / 2;
+        }
+      }
+    }
+
+    return { outWidth, outHeight, srcX, srcY, srcW, srcH };
+  };
 
   // Synchronize stream with video element
   useEffect(() => {
@@ -259,12 +313,16 @@ export const CameraView: React.FC<CameraViewProps> = ({
     setShutterFlashing(true);
     setTimeout(() => setShutterFlashing(false), 200);
 
-    // Create snap image by merging video frame or fallback image + AR overlays
+    const isVideoUsable = cameraActive && videoRef.current && videoRef.current.readyState >= 1;
+    const mediaEl = isVideoUsable ? videoRef.current : (fallbackImgRef.current && fallbackImgRef.current.naturalWidth > 0 ? fallbackImgRef.current : null);
+
+    // Compute precise uncompressed aspect-ratio geometry matching viewfinder
+    const { outWidth, outHeight, srcX, srcY, srcW, srcH } = getCaptureGeometry(containerRef.current, mediaEl);
+
+    // Create snap image canvas with crisp HD dimensions
     const tempCanvas = document.createElement('canvas');
-    const width = 720;
-    const height = 1280;
-    tempCanvas.width = width;
-    tempCanvas.height = height;
+    tempCanvas.width = outWidth;
+    tempCanvas.height = outHeight;
     const tCtx = tempCanvas.getContext('2d')!;
 
     // Apply night mode or filter adjustments
@@ -272,20 +330,19 @@ export const CameraView: React.FC<CameraViewProps> = ({
       tCtx.filter = 'brightness(1.3) contrast(1.1)';
     }
 
-    const isVideoUsable = cameraActive && videoRef.current && videoRef.current.readyState >= 1;
-
     let dataUrl = '';
     try {
       if (isVideoUsable && videoRef.current) {
         if (selectedFilter.canvasFilter) {
           tCtx.filter = selectedFilter.canvasFilter;
         }
-        // Flip if selfie mode
+        // Flip horizontally if selfie front camera
         if (facingMode === 'user') {
-          tCtx.translate(width, 0);
+          tCtx.translate(outWidth, 0);
           tCtx.scale(-1, 1);
         }
-        tCtx.drawImage(videoRef.current, 0, 0, width, height);
+        // Draw exact center cover crop preserving 100% natural aspect ratio
+        tCtx.drawImage(videoRef.current, srcX, srcY, srcW, srcH, 0, 0, outWidth, outHeight);
         tCtx.setTransform(1, 0, 0, 1, 0, 0);
       } else {
         // Fallback: draw preloaded simulation scene photo or procedural gradient
@@ -295,7 +352,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
             if (selectedFilter.canvasFilter) {
               tCtx.filter = selectedFilter.canvasFilter;
             }
-            tCtx.drawImage(fallbackImgRef.current, 0, 0, width, height);
+            tCtx.drawImage(fallbackImgRef.current, srcX, srcY, srcW, srcH, 0, 0, outWidth, outHeight);
             tCtx.filter = 'none';
             fallbackDrawn = true;
           } catch (drawErr) {
@@ -305,38 +362,38 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
         if (!fallbackDrawn) {
           // Aesthetic vibrant cyber gradient fallback
-          const grad = tCtx.createLinearGradient(0, 0, width, height);
+          const grad = tCtx.createLinearGradient(0, 0, outWidth, outHeight);
           grad.addColorStop(0, '#3b0764');
           grad.addColorStop(0.5, '#4f46e5');
           grad.addColorStop(1, '#090d16');
           tCtx.fillStyle = grad;
-          tCtx.fillRect(0, 0, width, height);
+          tCtx.fillRect(0, 0, outWidth, outHeight);
         }
       }
 
-      // Overlay AR graphics
+      // Overlay AR graphics at high resolution
       if (selectedFilter.overlayType) {
-        renderAROverlay(tCtx, width, height, selectedFilter.overlayType, Date.now());
+        renderAROverlay(tCtx, outWidth, outHeight, selectedFilter.overlayType, Date.now());
       }
 
-      dataUrl = tempCanvas.toDataURL('image/jpeg', 0.92);
+      dataUrl = tempCanvas.toDataURL('image/jpeg', 0.95);
     } catch (canvasErr) {
       console.warn('Canvas toDataURL security exception, generating procedural clean canvas:', canvasErr);
       // Fail-safe procedural fallback if canvas was tainted by cross-origin resource
       const safeCanvas = document.createElement('canvas');
-      safeCanvas.width = width;
-      safeCanvas.height = height;
+      safeCanvas.width = outWidth;
+      safeCanvas.height = outHeight;
       const sCtx = safeCanvas.getContext('2d')!;
-      const sGrad = sCtx.createLinearGradient(0, 0, width, height);
+      const sGrad = sCtx.createLinearGradient(0, 0, outWidth, outHeight);
       sGrad.addColorStop(0, '#1e1b4b');
       sGrad.addColorStop(0.5, '#4338ca');
       sGrad.addColorStop(1, '#0f172a');
       sCtx.fillStyle = sGrad;
-      sCtx.fillRect(0, 0, width, height);
+      sCtx.fillRect(0, 0, outWidth, outHeight);
       if (selectedFilter.overlayType) {
-        renderAROverlay(sCtx, width, height, selectedFilter.overlayType, Date.now());
+        renderAROverlay(sCtx, outWidth, outHeight, selectedFilter.overlayType, Date.now());
       }
-      dataUrl = safeCanvas.toDataURL('image/jpeg', 0.9);
+      dataUrl = safeCanvas.toDataURL('image/jpeg', 0.92);
     }
 
     const newSnap: CreatedSnap = {
@@ -351,6 +408,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
       filterId: selectedFilter.id,
       filterName: selectedFilter.name,
       hasAudio: true,
+      frameMode: 'fill',
     };
 
     onSnapCaptured(newSnap);
@@ -446,63 +504,64 @@ export const CameraView: React.FC<CameraViewProps> = ({
     if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
     playSound('record_stop');
 
-    const tempCanvas = document.createElement('canvas');
-    const width = 720;
-    const height = 1280;
-    tempCanvas.width = width;
-    tempCanvas.height = height;
-    const tCtx = tempCanvas.getContext('2d')!;
-
     const isVideoUsable = cameraActive && videoRef.current && videoRef.current.readyState >= 1;
+    const mediaEl = isVideoUsable ? videoRef.current : (fallbackImgRef.current && fallbackImgRef.current.naturalWidth > 0 ? fallbackImgRef.current : null);
+
+    const { outWidth, outHeight, srcX, srcY, srcW, srcH } = getCaptureGeometry(containerRef.current, mediaEl);
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = outWidth;
+    tempCanvas.height = outHeight;
+    const tCtx = tempCanvas.getContext('2d')!;
 
     let dataUrl = '';
     try {
       if (isVideoUsable && videoRef.current) {
         if (facingMode === 'user') {
-          tCtx.translate(width, 0);
+          tCtx.translate(outWidth, 0);
           tCtx.scale(-1, 1);
         }
-        tCtx.drawImage(videoRef.current, 0, 0, width, height);
+        tCtx.drawImage(videoRef.current, srcX, srcY, srcW, srcH, 0, 0, outWidth, outHeight);
         tCtx.setTransform(1, 0, 0, 1, 0, 0);
       } else {
         let fallbackDrawn = false;
         if (fallbackImgRef.current && fallbackImgRef.current.complete && fallbackImgRef.current.naturalWidth > 0) {
           try {
-            tCtx.drawImage(fallbackImgRef.current, 0, 0, width, height);
+            tCtx.drawImage(fallbackImgRef.current, srcX, srcY, srcW, srcH, 0, 0, outWidth, outHeight);
             fallbackDrawn = true;
           } catch (err) {
             console.warn('Video fallback draw err:', err);
           }
         }
         if (!fallbackDrawn) {
-          const grad = tCtx.createLinearGradient(0, 0, width, height);
+          const grad = tCtx.createLinearGradient(0, 0, outWidth, outHeight);
           grad.addColorStop(0, '#312e81');
           grad.addColorStop(1, '#0f172a');
           tCtx.fillStyle = grad;
-          tCtx.fillRect(0, 0, width, height);
+          tCtx.fillRect(0, 0, outWidth, outHeight);
         }
       }
 
       if (selectedFilter.overlayType) {
-        renderAROverlay(tCtx, width, height, selectedFilter.overlayType, Date.now());
+        renderAROverlay(tCtx, outWidth, outHeight, selectedFilter.overlayType, Date.now());
       }
 
-      dataUrl = tempCanvas.toDataURL('image/jpeg', 0.92);
+      dataUrl = tempCanvas.toDataURL('image/jpeg', 0.95);
     } catch (err) {
       console.warn('Video stop toDataURL error:', err);
       const safeCanvas = document.createElement('canvas');
-      safeCanvas.width = width;
-      safeCanvas.height = height;
+      safeCanvas.width = outWidth;
+      safeCanvas.height = outHeight;
       const sCtx = safeCanvas.getContext('2d')!;
-      const grad = sCtx.createLinearGradient(0, 0, width, height);
+      const grad = sCtx.createLinearGradient(0, 0, outWidth, outHeight);
       grad.addColorStop(0, '#1e1b4b');
       grad.addColorStop(1, '#0f172a');
       sCtx.fillStyle = grad;
-      sCtx.fillRect(0, 0, width, height);
+      sCtx.fillRect(0, 0, outWidth, outHeight);
       if (selectedFilter.overlayType) {
-        renderAROverlay(sCtx, width, height, selectedFilter.overlayType, Date.now());
+        renderAROverlay(sCtx, outWidth, outHeight, selectedFilter.overlayType, Date.now());
       }
-      dataUrl = safeCanvas.toDataURL('image/jpeg', 0.9);
+      dataUrl = safeCanvas.toDataURL('image/jpeg', 0.92);
     }
 
     const newSnap: CreatedSnap = {
@@ -517,6 +576,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
       filterId: selectedFilter.id,
       filterName: selectedFilter.name,
       hasAudio: true,
+      frameMode: 'fill',
     };
 
     onSnapCaptured(newSnap);
@@ -544,32 +604,24 @@ export const CameraView: React.FC<CameraViewProps> = ({
       if (!isVideo) {
         const img = new Image();
         img.onload = () => {
+          const { outWidth, outHeight, srcX, srcY, srcW, srcH } = getCaptureGeometry(containerRef.current, img);
           const tempCanvas = document.createElement('canvas');
-          const width = 720;
-          const height = 1280;
-          tempCanvas.width = width;
-          tempCanvas.height = height;
+          tempCanvas.width = outWidth;
+          tempCanvas.height = outHeight;
           const tCtx = tempCanvas.getContext('2d')!;
 
           if (selectedFilter.canvasFilter) {
             tCtx.filter = selectedFilter.canvasFilter;
           }
 
-          // Cover fit the uploaded image
-          const hRatio = width / img.width;
-          const vRatio = height / img.height;
-          const ratio = Math.max(hRatio, vRatio);
-          const centerShiftX = (width - img.width * ratio) / 2;
-          const centerShiftY = (height - img.height * ratio) / 2;
-
-          tCtx.drawImage(img, 0, 0, img.width, img.height, centerShiftX, centerShiftY, img.width * ratio, img.height * ratio);
+          tCtx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, outWidth, outHeight);
           tCtx.filter = 'none';
 
           if (selectedFilter.overlayType) {
-            renderAROverlay(tCtx, width, height, selectedFilter.overlayType, Date.now());
+            renderAROverlay(tCtx, outWidth, outHeight, selectedFilter.overlayType, Date.now());
           }
 
-          const processedUrl = tempCanvas.toDataURL('image/jpeg', 0.94);
+          const processedUrl = tempCanvas.toDataURL('image/jpeg', 0.95);
 
           const snap: CreatedSnap = {
             id: `snap_upload_${Date.now()}`,
@@ -583,6 +635,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
             filterId: selectedFilter.id,
             filterName: selectedFilter.name,
             hasAudio: true,
+            frameMode: 'fill',
           };
           onSnapCaptured(snap);
         };
@@ -600,6 +653,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
           filterId: selectedFilter.id,
           filterName: selectedFilter.name,
           hasAudio: true,
+          frameMode: 'fill',
         };
         onSnapCaptured(snap);
       }
@@ -608,7 +662,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
   };
 
   return (
-    <div className="relative w-full h-full bg-black overflow-hidden flex flex-col justify-between select-none">
+    <div ref={containerRef} className="relative w-full h-full bg-black overflow-hidden flex flex-col justify-between select-none">
       {/* Hidden File Input for Device Gallery / Upload */}
       <input
         ref={fileInputRef}

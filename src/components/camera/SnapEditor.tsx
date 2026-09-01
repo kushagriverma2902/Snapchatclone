@@ -16,6 +16,11 @@ import {
   Flame,
   MapPin,
   Thermometer,
+  Crop,
+  Maximize2,
+  Square,
+  Smartphone,
+  Tv,
 } from 'lucide-react';
 import { CreatedSnap, OverlayText, DrawingPath, DrawingPoint, StickerItem } from '../../types';
 import { playSound } from '../../utils/audioEffects';
@@ -64,9 +69,10 @@ export const SnapEditor: React.FC<SnapEditorProps> = ({ snap, onCancel, onSendSn
   const [stickers, setStickers] = useState<StickerItem[]>(snap.stickers || []);
   const [duration, setDuration] = useState<number>(snap.duration || 5);
   const [hasAudio, setHasAudio] = useState<boolean>(snap.hasAudio ?? true);
+  const [frameMode, setFrameMode] = useState<'fill' | 'fit' | 'square' | 'classic' | 'wide'>(snap.frameMode || 'fill');
 
   // Tool Modes
-  const [activeTool, setActiveTool] = useState<'none' | 'draw' | 'text' | 'stickers' | 'duration' | 'send'>('none');
+  const [activeTool, setActiveTool] = useState<'none' | 'draw' | 'text' | 'stickers' | 'duration' | 'frame' | 'send'>('none');
 
   // Drawing state
   const [brushColor, setBrushColor] = useState<string>('#ef4444');
@@ -138,7 +144,7 @@ export const SnapEditor: React.FC<SnapEditorProps> = ({ snap, onCancel, onSendSn
       ctx.stroke();
       ctx.restore();
     }
-  }, [drawings, currentPath, brushColor, brushSize, isGlowBrush]);
+  }, [drawings, currentPath, brushColor, brushSize, isGlowBrush, frameMode]);
 
   // Drawing event handlers
   const handleStartDraw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
@@ -245,36 +251,89 @@ export const SnapEditor: React.FC<SnapEditorProps> = ({ snap, onCancel, onSendSn
     setActiveTool('none');
   };
 
-  // Download snap merged with drawing & stickers
+  // Download snap merged with drawing & stickers respecting chosen frame size
   const handleSaveToDevice = () => {
     playSound('pop');
+
+    // Create high resolution canvas
     const canvas = document.createElement('canvas');
-    canvas.width = 720;
-    canvas.height = 1280;
+    let outWidth = 1080;
+    let outHeight = 1920;
+
+    if (frameMode === 'square') {
+      outWidth = 1080;
+      outHeight = 1080;
+    } else if (frameMode === 'classic') {
+      outWidth = 1080;
+      outHeight = 1440; // 3:4 aspect
+    } else if (frameMode === 'wide') {
+      outWidth = 1920;
+      outHeight = 1080; // 16:9 aspect
+    }
+
+    canvas.width = outWidth;
+    canvas.height = outHeight;
     const ctx = canvas.getContext('2d')!;
 
     const baseImg = new Image();
     baseImg.crossOrigin = 'anonymous';
     baseImg.src = snap.mediaUrl;
     baseImg.onload = () => {
-      ctx.drawImage(baseImg, 0, 0, 720, 1280);
+      const iw = baseImg.naturalWidth || baseImg.width || outWidth;
+      const ih = baseImg.naturalHeight || baseImg.height || outHeight;
+
+      if (frameMode === 'fill') {
+        ctx.drawImage(baseImg, 0, 0, outWidth, outHeight);
+      } else if (frameMode === 'fit') {
+        // Dark/ambient background + letterboxed/pillarboxed crisp photo
+        ctx.fillStyle = '#090d16';
+        ctx.fillRect(0, 0, outWidth, outHeight);
+
+        const ratio = Math.min(outWidth / iw, outHeight / ih);
+        const dw = iw * ratio;
+        const dh = ih * ratio;
+        const dx = (outWidth - dw) / 2;
+        const dy = (outHeight - dh) / 2;
+        ctx.drawImage(baseImg, dx, dy, dw, dh);
+      } else {
+        // Center crop to target aspect ratio
+        const canvasRatio = outWidth / outHeight;
+        const mediaRatio = iw / ih;
+        let sx = 0;
+        let sy = 0;
+        let sw = iw;
+        let sh = ih;
+
+        if (mediaRatio > canvasRatio) {
+          sw = ih * canvasRatio;
+          sh = ih;
+          sx = (iw - sw) / 2;
+          sy = 0;
+        } else {
+          sw = iw;
+          sh = iw / canvasRatio;
+          sx = 0;
+          sy = (ih - sh) / 2;
+        }
+        ctx.drawImage(baseImg, sx, sy, sw, sh, 0, 0, outWidth, outHeight);
+      }
 
       // Draw all paths
       drawings.forEach((path) => {
         if (path.points.length < 2) return;
         ctx.save();
         ctx.strokeStyle = path.color;
-        ctx.lineWidth = path.brushSize;
+        ctx.lineWidth = path.brushSize * (outWidth / 720);
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         if (path.isGlow) {
           ctx.shadowColor = path.color;
-          ctx.shadowBlur = 12;
+          ctx.shadowBlur = 16;
         }
         ctx.beginPath();
-        ctx.moveTo(path.points[0].x, path.points[0].y);
+        ctx.moveTo((path.points[0].x / 720) * outWidth, (path.points[0].y / 1280) * outHeight);
         for (let i = 1; i < path.points.length; i++) {
-          ctx.lineTo(path.points[i].x, path.points[i].y);
+          ctx.lineTo((path.points[i].x / 720) * outWidth, (path.points[i].y / 1280) * outHeight);
         }
         ctx.stroke();
         ctx.restore();
@@ -283,22 +342,22 @@ export const SnapEditor: React.FC<SnapEditorProps> = ({ snap, onCancel, onSendSn
       // Draw overlays
       overlays.forEach((o) => {
         ctx.save();
-        const px = (o.x / 100) * 720;
-        const py = (o.y / 100) * 1280;
+        const px = (o.x / 100) * outWidth;
+        const py = (o.y / 100) * outHeight;
         ctx.translate(px, py);
         ctx.rotate((o.rotation * Math.PI) / 180);
 
-        ctx.font = `bold ${o.fontSize * 1.5}px ${o.fontFamily === 'syne' ? 'Syne' : 'sans-serif'}`;
+        ctx.font = `bold ${o.fontSize * (outWidth / 720) * 1.5}px ${o.fontFamily === 'syne' ? 'Syne' : 'sans-serif'}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
         if (o.bgStyle === 'banner') {
           ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-          ctx.fillRect(-300, -26, 600, 52);
+          ctx.fillRect(-outWidth / 2, -36, outWidth, 72);
         } else if (o.bgStyle === 'pill') {
           ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
           ctx.beginPath();
-          ctx.roundRect(-150, -22, 300, 44, 22);
+          ctx.roundRect(-220, -32, 440, 64, 32);
           ctx.fill();
         }
 
@@ -309,7 +368,7 @@ export const SnapEditor: React.FC<SnapEditorProps> = ({ snap, onCancel, onSendSn
 
       const a = document.createElement('a');
       a.href = canvas.toDataURL('image/jpeg', 0.95);
-      a.download = `SnapClone_${Date.now()}.jpg`;
+      a.download = `Snap_${frameMode}_${Date.now()}.jpg`;
       a.click();
     };
   };
@@ -323,6 +382,7 @@ export const SnapEditor: React.FC<SnapEditorProps> = ({ snap, onCancel, onSendSn
       stickers,
       duration,
       hasAudio,
+      frameMode,
     };
 
     onSendSnap(updatedSnap, selectedRecipients, postToStory);
@@ -330,86 +390,115 @@ export const SnapEditor: React.FC<SnapEditorProps> = ({ snap, onCancel, onSendSn
 
   return (
     <div className="relative w-full h-full bg-black overflow-hidden flex flex-col justify-between select-none">
-      {/* Background Captured Media */}
-      <div className="absolute inset-0 w-full h-full">
-        <img
-          src={snap.mediaUrl}
-          alt="Captured Snap"
-          referrerPolicy="no-referrer"
-          className="w-full h-full object-cover"
-        />
+      {/* Dynamic Background / Framing Layer */}
+      <div className="absolute inset-0 w-full h-full flex items-center justify-center overflow-hidden bg-neutral-950">
+        {/* Ambient Blurred Background for non-fill frame modes */}
+        {frameMode !== 'fill' && (
+          <div className="absolute inset-0 w-full h-full overflow-hidden">
+            <img
+              src={snap.mediaUrl}
+              alt="Ambient Glow"
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover filter blur-3xl scale-125 opacity-40 brightness-75"
+            />
+          </div>
+        )}
 
-        {/* Freehand Drawing Overlay Canvas */}
-        <canvas
-          ref={canvasRef}
-          width={720}
-          height={1280}
-          onMouseDown={handleStartDraw}
-          onMouseMove={handleMoveDraw}
-          onMouseUp={handleEndDraw}
-          onTouchStart={handleStartDraw}
-          onTouchMove={handleMoveDraw}
-          onTouchEnd={handleEndDraw}
-          className={`absolute inset-0 w-full h-full ${
-            activeTool === 'draw' ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'
+        {/* Foreground Content with user-chosen aspect frame */}
+        <div
+          className={`relative transition-all duration-300 flex items-center justify-center overflow-hidden ${
+            frameMode === 'fill'
+              ? 'w-full h-full'
+              : frameMode === 'fit'
+              ? 'w-full h-full max-w-full max-h-full p-2'
+              : frameMode === 'square'
+              ? 'w-[90%] aspect-square rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-white/20'
+              : frameMode === 'classic'
+              ? 'w-[88%] aspect-[3/4] rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-white/20'
+              : 'w-[96%] aspect-[16/9] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-white/20'
           }`}
-        />
+        >
+          <img
+            src={snap.mediaUrl}
+            alt="Captured Snap"
+            referrerPolicy="no-referrer"
+            className={`w-full h-full transition-all duration-300 ${
+              frameMode === 'fit' ? 'object-contain' : 'object-cover'
+            }`}
+          />
 
-        {/* Rendered Text Overlays */}
-        {overlays.map((o) => (
-          <div
-            key={o.id}
-            className="absolute -translate-x-1/2 -translate-y-1/2 cursor-move pointer-events-auto"
-            style={{
-              left: `${o.x}%`,
-              top: `${o.y}%`,
-              transform: `translate(-50%, -50%) rotate(${o.rotation}deg)`,
-            }}
-          >
+          {/* Freehand Drawing Overlay Canvas */}
+          <canvas
+            ref={canvasRef}
+            width={720}
+            height={1280}
+            onMouseDown={handleStartDraw}
+            onMouseMove={handleMoveDraw}
+            onMouseUp={handleEndDraw}
+            onTouchStart={handleStartDraw}
+            onTouchMove={handleMoveDraw}
+            onTouchEnd={handleEndDraw}
+            className={`absolute inset-0 w-full h-full ${
+              activeTool === 'draw' ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'
+            }`}
+          />
+
+          {/* Rendered Text Overlays */}
+          {overlays.map((o) => (
             <div
-              className={`px-4 py-2 text-center transition-all ${
-                o.bgStyle === 'banner'
-                  ? 'bg-black/70 backdrop-blur-xs w-screen max-w-full font-bold shadow-lg'
-                  : o.bgStyle === 'pill'
-                  ? 'bg-black/85 backdrop-blur-md rounded-full shadow-2xl px-5 py-2 font-bold border border-white/20'
-                  : o.bgStyle === 'neon'
-                  ? 'bg-cyan-950/80 border border-cyan-400 text-cyan-300 rounded-xl px-4 py-2 shadow-[0_0_15px_rgba(6,182,212,0.6)] font-bold'
-                  : o.bgStyle === 'rainbow'
-                  ? 'bg-gradient-to-r from-red-500 via-amber-500 to-indigo-500 rounded-full px-5 py-2 font-bold text-white shadow-xl'
-                  : 'font-extrabold drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]'
-              }`}
+              key={o.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2 cursor-move pointer-events-auto"
               style={{
-                color: o.color,
-                fontSize: `${o.fontSize}px`,
-                fontFamily: o.fontFamily === 'syne' ? 'Syne, sans-serif' : o.fontFamily === 'marker' ? 'Permanent Marker, cursive' : 'Plus Jakarta Sans, sans-serif',
+                left: `${o.x}%`,
+                top: `${o.y}%`,
+                transform: `translate(-50%, -50%) rotate(${o.rotation}deg)`,
               }}
             >
-              {o.text}
-            </div>
-          </div>
-        ))}
-
-        {/* Rendered Stickers */}
-        {stickers.map((s) => (
-          <div
-            key={s.id}
-            className="absolute -translate-x-1/2 -translate-y-1/2 cursor-move pointer-events-auto select-none"
-            style={{
-              left: `${s.x}%`,
-              top: `${s.y}%`,
-              transform: `translate(-50%, -50%) scale(${s.scale}) rotate(${s.rotation}deg)`,
-            }}
-          >
-            {s.label ? (
-              <div className="bg-black/75 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/20 flex items-center gap-2 text-white font-bold text-sm shadow-xl">
-                <span>{s.emojiOrUrl}</span>
-                <span>{s.label}</span>
+              <div
+                className={`px-4 py-2 text-center transition-all ${
+                  o.bgStyle === 'banner'
+                    ? 'bg-black/70 backdrop-blur-xs w-screen max-w-full font-bold shadow-lg'
+                    : o.bgStyle === 'pill'
+                    ? 'bg-black/85 backdrop-blur-md rounded-full shadow-2xl px-5 py-2 font-bold border border-white/20'
+                    : o.bgStyle === 'neon'
+                    ? 'bg-cyan-950/80 border border-cyan-400 text-cyan-300 rounded-xl px-4 py-2 shadow-[0_0_15px_rgba(6,182,212,0.6)] font-bold'
+                    : o.bgStyle === 'rainbow'
+                    ? 'bg-gradient-to-r from-red-500 via-amber-500 to-indigo-500 rounded-full px-5 py-2 font-bold text-white shadow-xl'
+                    : 'font-extrabold drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]'
+                }`}
+                style={{
+                  color: o.color,
+                  fontSize: `${o.fontSize}px`,
+                  fontFamily: o.fontFamily === 'syne' ? 'Syne, sans-serif' : o.fontFamily === 'marker' ? 'Permanent Marker, cursive' : 'Plus Jakarta Sans, sans-serif',
+                }}
+              >
+                {o.text}
               </div>
-            ) : (
-              <div className="text-5xl filter drop-shadow-lg transform active:scale-110 transition">{s.emojiOrUrl}</div>
-            )}
-          </div>
-        ))}
+            </div>
+          ))}
+
+          {/* Rendered Stickers */}
+          {stickers.map((s) => (
+            <div
+              key={s.id}
+              className="absolute -translate-x-1/2 -translate-y-1/2 cursor-move pointer-events-auto select-none"
+              style={{
+                left: `${s.x}%`,
+                top: `${s.y}%`,
+                transform: `translate(-50%, -50%) scale(${s.scale}) rotate(${s.rotation}deg)`,
+              }}
+            >
+              {s.label ? (
+                <div className="bg-black/75 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/20 flex items-center gap-2 text-white font-bold text-sm shadow-xl">
+                  <span>{s.emojiOrUrl}</span>
+                  <span>{s.label}</span>
+                </div>
+              ) : (
+                <div className="text-5xl filter drop-shadow-lg transform active:scale-110 transition">{s.emojiOrUrl}</div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Top Action Bar */}
@@ -471,6 +560,21 @@ export const SnapEditor: React.FC<SnapEditorProps> = ({ snap, onCancel, onSendSn
             title="Stickers"
           >
             <Smile className="w-5 h-5" />
+          </button>
+
+          {/* Frame Size / Aspect Ratio Selector */}
+          <button
+            id="editor-frame-btn"
+            onClick={() => {
+              playSound('tap');
+              setActiveTool(activeTool === 'frame' ? 'none' : 'frame');
+            }}
+            className={`w-9 h-9 rounded-full flex items-center justify-center transition ${
+              activeTool === 'frame' ? 'bg-yellow-400 text-black font-bold shadow-[0_0_12px_rgba(250,204,21,0.5)]' : 'text-white/90 hover:bg-white/15'
+            }`}
+            title="Frame Size & Aspect Ratio"
+          >
+            <Crop className="w-5 h-5" />
           </button>
 
           {/* Duration Selector */}
@@ -658,6 +762,46 @@ export const SnapEditor: React.FC<SnapEditorProps> = ({ snap, onCancel, onSendSn
               >
                 <span className="text-3xl">{item.emoji}</span>
                 {item.label && <span className="text-[10px] font-bold text-white/70 truncate w-full text-center">{item.label}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Floating Modal: Frame Size & Aspect Ratio Selector */}
+      {activeTool === 'frame' && (
+        <div className="relative z-30 self-center bg-[#16162a]/90 backdrop-blur-2xl p-3.5 rounded-3xl border border-white/20 flex flex-col gap-2.5 shadow-[0_16px_48px_rgba(0,0,0,0.6)] animate-in fade-in max-w-sm">
+          <div className="flex items-center justify-between px-1 border-b border-white/10 pb-1.5">
+            <span className="text-xs font-extrabold text-white tracking-wide">Frame Size & Format</span>
+            <button
+              onClick={() => setActiveTool('none')}
+              className="text-[11px] text-white/50 hover:text-white font-semibold"
+            >
+              Done
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+            {[
+              { mode: 'fill', label: 'Full 9:16', icon: <Smartphone className="w-4 h-4" /> },
+              { mode: 'fit', label: 'Fit Original', icon: <Maximize2 className="w-4 h-4" /> },
+              { mode: 'square', label: 'Square 1:1', icon: <Square className="w-4 h-4" /> },
+              { mode: 'classic', label: 'Portrait 3:4', icon: <Crop className="w-4 h-4" /> },
+              { mode: 'wide', label: 'Cinema 16:9', icon: <Tv className="w-4 h-4" /> },
+            ].map((f) => (
+              <button
+                key={f.mode}
+                onClick={() => {
+                  playSound('tap');
+                  setFrameMode(f.mode as any);
+                }}
+                className={`px-3 py-2 rounded-2xl text-xs font-bold flex flex-col items-center gap-1 transition ${
+                  frameMode === f.mode
+                    ? 'bg-yellow-400 text-black shadow-[0_0_12px_rgba(250,204,21,0.5)] scale-105 font-black'
+                    : 'bg-white/10 text-white/80 hover:bg-white/20 border border-white/10'
+                }`}
+              >
+                {f.icon}
+                <span className="text-[10px] whitespace-nowrap">{f.label}</span>
               </button>
             ))}
           </div>
