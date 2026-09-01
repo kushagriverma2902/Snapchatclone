@@ -275,15 +275,33 @@ export const CameraView: React.FC<CameraViewProps> = ({
   // Real-time canvas processing loop for AR overlays
   useEffect(() => {
     const canvas = canvasRef.current;
+    const container = containerRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     let isRunning = true;
 
+    const updateCanvasSize = () => {
+      if (!canvas || !container) return;
+      const rect = container.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const targetW = Math.round(rect.width * dpr);
+      const targetH = Math.round(rect.height * dpr);
+
+      if (targetW > 0 && targetH > 0 && (canvas.width !== targetW || canvas.height !== targetH)) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+    };
+
+    updateCanvasSize();
+    window.addEventListener('resize', updateCanvasSize);
+
     const renderLoop = () => {
       if (!isRunning) return;
 
+      updateCanvasSize();
       const width = canvas.width || 720;
       const height = canvas.height || 1280;
 
@@ -301,6 +319,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
     return () => {
       isRunning = false;
+      window.removeEventListener('resize', updateCanvasSize);
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
