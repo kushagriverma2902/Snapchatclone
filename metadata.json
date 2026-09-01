@@ -1,0 +1,11 @@
+{
+  "name": "SnapClone",
+  "description": "Mobile-first ephemeral photo and video messaging app featuring real-time camera capture, AR filters, disappearing Snaps, 24-hour Stories, streaks, and private chat.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
