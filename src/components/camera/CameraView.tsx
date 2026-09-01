@@ -252,42 +252,70 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
     const isVideoUsable = cameraActive && videoRef.current && videoRef.current.readyState >= 1;
 
-    if (isVideoUsable && videoRef.current) {
-      if (selectedFilter.canvasFilter) {
-        tCtx.filter = selectedFilter.canvasFilter;
-      }
-      // Flip if selfie mode
-      if (facingMode === 'user') {
-        tCtx.translate(width, 0);
-        tCtx.scale(-1, 1);
-      }
-      tCtx.drawImage(videoRef.current, 0, 0, width, height);
-      tCtx.setTransform(1, 0, 0, 1, 0, 0);
-    } else {
-      // Fallback: draw preloaded simulation scene photo
-      if (fallbackImgRef.current && fallbackImgRef.current.complete) {
+    let dataUrl = '';
+    try {
+      if (isVideoUsable && videoRef.current) {
         if (selectedFilter.canvasFilter) {
           tCtx.filter = selectedFilter.canvasFilter;
         }
-        tCtx.drawImage(fallbackImgRef.current, 0, 0, width, height);
-        tCtx.filter = 'none';
+        // Flip if selfie mode
+        if (facingMode === 'user') {
+          tCtx.translate(width, 0);
+          tCtx.scale(-1, 1);
+        }
+        tCtx.drawImage(videoRef.current, 0, 0, width, height);
+        tCtx.setTransform(1, 0, 0, 1, 0, 0);
       } else {
-        // Aesthetic dark gradient fallback
-        const grad = tCtx.createLinearGradient(0, 0, width, height);
-        grad.addColorStop(0, '#1e1b4b');
-        grad.addColorStop(0.5, '#312e81');
-        grad.addColorStop(1, '#0f172a');
-        tCtx.fillStyle = grad;
-        tCtx.fillRect(0, 0, width, height);
+        // Fallback: draw preloaded simulation scene photo or procedural gradient
+        let fallbackDrawn = false;
+        if (fallbackImgRef.current && fallbackImgRef.current.complete && fallbackImgRef.current.naturalWidth > 0) {
+          try {
+            if (selectedFilter.canvasFilter) {
+              tCtx.filter = selectedFilter.canvasFilter;
+            }
+            tCtx.drawImage(fallbackImgRef.current, 0, 0, width, height);
+            tCtx.filter = 'none';
+            fallbackDrawn = true;
+          } catch (drawErr) {
+            console.warn('Fallback img draw issue:', drawErr);
+          }
+        }
+
+        if (!fallbackDrawn) {
+          // Aesthetic vibrant cyber gradient fallback
+          const grad = tCtx.createLinearGradient(0, 0, width, height);
+          grad.addColorStop(0, '#3b0764');
+          grad.addColorStop(0.5, '#4f46e5');
+          grad.addColorStop(1, '#090d16');
+          tCtx.fillStyle = grad;
+          tCtx.fillRect(0, 0, width, height);
+        }
       }
-    }
 
-    // Overlay AR graphics
-    if (selectedFilter.overlayType) {
-      renderAROverlay(tCtx, width, height, selectedFilter.overlayType, Date.now());
-    }
+      // Overlay AR graphics
+      if (selectedFilter.overlayType) {
+        renderAROverlay(tCtx, width, height, selectedFilter.overlayType, Date.now());
+      }
 
-    const dataUrl = tempCanvas.toDataURL('image/jpeg', 0.94);
+      dataUrl = tempCanvas.toDataURL('image/jpeg', 0.92);
+    } catch (canvasErr) {
+      console.warn('Canvas toDataURL security exception, generating procedural clean canvas:', canvasErr);
+      // Fail-safe procedural fallback if canvas was tainted by cross-origin resource
+      const safeCanvas = document.createElement('canvas');
+      safeCanvas.width = width;
+      safeCanvas.height = height;
+      const sCtx = safeCanvas.getContext('2d')!;
+      const sGrad = sCtx.createLinearGradient(0, 0, width, height);
+      sGrad.addColorStop(0, '#1e1b4b');
+      sGrad.addColorStop(0.5, '#4338ca');
+      sGrad.addColorStop(1, '#0f172a');
+      sCtx.fillStyle = sGrad;
+      sCtx.fillRect(0, 0, width, height);
+      if (selectedFilter.overlayType) {
+        renderAROverlay(sCtx, width, height, selectedFilter.overlayType, Date.now());
+      }
+      dataUrl = safeCanvas.toDataURL('image/jpeg', 0.9);
+    }
 
     const newSnap: CreatedSnap = {
       id: `snap_${Date.now()}`,
@@ -405,30 +433,55 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
     const isVideoUsable = cameraActive && videoRef.current && videoRef.current.readyState >= 1;
 
-    if (isVideoUsable && videoRef.current) {
-      if (facingMode === 'user') {
-        tCtx.translate(width, 0);
-        tCtx.scale(-1, 1);
-      }
-      tCtx.drawImage(videoRef.current, 0, 0, width, height);
-      tCtx.setTransform(1, 0, 0, 1, 0, 0);
-    } else {
-      if (fallbackImgRef.current && fallbackImgRef.current.complete) {
-        tCtx.drawImage(fallbackImgRef.current, 0, 0, width, height);
+    let dataUrl = '';
+    try {
+      if (isVideoUsable && videoRef.current) {
+        if (facingMode === 'user') {
+          tCtx.translate(width, 0);
+          tCtx.scale(-1, 1);
+        }
+        tCtx.drawImage(videoRef.current, 0, 0, width, height);
+        tCtx.setTransform(1, 0, 0, 1, 0, 0);
       } else {
-        const grad = tCtx.createLinearGradient(0, 0, width, height);
-        grad.addColorStop(0, '#312e81');
-        grad.addColorStop(1, '#0f172a');
-        tCtx.fillStyle = grad;
-        tCtx.fillRect(0, 0, width, height);
+        let fallbackDrawn = false;
+        if (fallbackImgRef.current && fallbackImgRef.current.complete && fallbackImgRef.current.naturalWidth > 0) {
+          try {
+            tCtx.drawImage(fallbackImgRef.current, 0, 0, width, height);
+            fallbackDrawn = true;
+          } catch (err) {
+            console.warn('Video fallback draw err:', err);
+          }
+        }
+        if (!fallbackDrawn) {
+          const grad = tCtx.createLinearGradient(0, 0, width, height);
+          grad.addColorStop(0, '#312e81');
+          grad.addColorStop(1, '#0f172a');
+          tCtx.fillStyle = grad;
+          tCtx.fillRect(0, 0, width, height);
+        }
       }
-    }
 
-    if (selectedFilter.overlayType) {
-      renderAROverlay(tCtx, width, height, selectedFilter.overlayType, Date.now());
-    }
+      if (selectedFilter.overlayType) {
+        renderAROverlay(tCtx, width, height, selectedFilter.overlayType, Date.now());
+      }
 
-    const dataUrl = tempCanvas.toDataURL('image/jpeg', 0.94);
+      dataUrl = tempCanvas.toDataURL('image/jpeg', 0.92);
+    } catch (err) {
+      console.warn('Video stop toDataURL error:', err);
+      const safeCanvas = document.createElement('canvas');
+      safeCanvas.width = width;
+      safeCanvas.height = height;
+      const sCtx = safeCanvas.getContext('2d')!;
+      const grad = sCtx.createLinearGradient(0, 0, width, height);
+      grad.addColorStop(0, '#1e1b4b');
+      grad.addColorStop(1, '#0f172a');
+      sCtx.fillStyle = grad;
+      sCtx.fillRect(0, 0, width, height);
+      if (selectedFilter.overlayType) {
+        renderAROverlay(sCtx, width, height, selectedFilter.overlayType, Date.now());
+      }
+      dataUrl = safeCanvas.toDataURL('image/jpeg', 0.9);
+    }
 
     const newSnap: CreatedSnap = {
       id: `snap_video_${Date.now()}`,
@@ -857,17 +910,18 @@ export const CameraView: React.FC<CameraViewProps> = ({
             {/* Main Shutter Button with Click & Long-Press Handlers */}
             <button
               id="shutter-capture-button"
-              onClick={() => {
-                // If not currently recording video, quick tap captures photo
-                if (!isRecording) {
-                  capturePhoto();
-                }
-              }}
               onMouseDown={handleStartCapture}
               onMouseUp={handleEndCapture}
               onTouchStart={handleStartCapture}
               onTouchEnd={handleEndCapture}
-              className={`relative rounded-full transition-all duration-150 transform active:scale-95 flex items-center justify-center shadow-[0_0_32px_rgba(0,0,0,0.5)] ${
+              onClick={(e) => {
+                e.stopPropagation();
+                // Fallback for devices or synthetic clicks where mouseUp didn't trigger hold
+                if (!isRecording && !isHoldingRef.current) {
+                  capturePhoto();
+                }
+              }}
+              className={`relative rounded-full transition-all duration-150 transform active:scale-95 flex items-center justify-center shadow-[0_0_32px_rgba(0,0,0,0.5)] touch-manipulation cursor-pointer ${
                 isRecording
                   ? 'w-20 h-20 bg-red-500 ring-4 ring-white/60 animate-pulse'
                   : 'w-20 h-20 bg-transparent ring-4 ring-white/90 hover:ring-white'
