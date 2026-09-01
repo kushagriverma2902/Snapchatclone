@@ -64,6 +64,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
 }) => {
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraLoading, setCameraLoading] = useState<boolean>(true);
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [flash, setFlash] = useState<boolean>(false);
   const [timerDuration, setTimerDuration] = useState<0 | 3 | 10>(0);
@@ -73,7 +74,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordProgress, setRecordProgress] = useState<number>(0);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [permissionPrompted, setPermissionPrompted] = useState<boolean>(false);
+  const [showPermissionGuide, setShowPermissionGuide] = useState<boolean>(false);
   const [selectedSceneIndex, setSelectedSceneIndex] = useState<number>(0);
   const [shutterFlashing, setShutterFlashing] = useState<boolean>(false);
 
@@ -88,6 +89,34 @@ export const CameraView: React.FC<CameraViewProps> = ({
   const holdTimeoutRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Synchronize stream with video element
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video && activeStream) {
+      video.srcObject = activeStream;
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('webkit-playsinline', 'true');
+      video.muted = true;
+      video.autoplay = true;
+
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            setCameraActive(true);
+            setCameraLoading(false);
+            setCameraError(null);
+          })
+          .catch((err) => {
+            console.warn('Video auto-play warning:', err);
+            // Some browsers require explicit user interaction to play
+            setCameraActive(true);
+            setCameraLoading(false);
+          });
+      }
+    }
+  }, [activeStream]);
+
   // Progressive camera initialization with robust fallback constraints
   const initCamera = useCallback(async () => {
     setCameraLoading(true);
@@ -98,6 +127,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
+    setActiveStream(null);
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setCameraActive(false);
@@ -113,6 +143,12 @@ export const CameraView: React.FC<CameraViewProps> = ({
           facingMode: { ideal: facingMode },
           width: { ideal: 1280 },
           height: { ideal: 720 },
+        },
+        audio: false,
+      },
+      {
+        video: {
+          facingMode: { ideal: facingMode },
         },
         audio: false,
       },
@@ -142,37 +178,23 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
     if (acquiredStream) {
       streamRef.current = acquiredStream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = acquiredStream;
-        videoRef.current.onloadedmetadata = () => {
-          if (videoRef.current) {
-            videoRef.current
-              .play()
-              .then(() => {
-                setCameraActive(true);
-                setCameraLoading(false);
-                setCameraError(null);
-              })
-              .catch((playErr) => {
-                console.warn('Video play error:', playErr);
-                setCameraActive(true);
-                setCameraLoading(false);
-              });
-          }
-        };
-      } else {
-        setCameraActive(true);
-        setCameraLoading(false);
-      }
+      setActiveStream(acquiredStream);
+      setCameraActive(true);
+      setCameraLoading(false);
+      setCameraError(null);
     } else {
       setCameraActive(false);
       setCameraLoading(false);
-      const errMsg = lastError?.name === 'NotAllowedError' || lastError?.name === 'PermissionDeniedError'
-        ? 'Camera permission was denied. Tap "Allow Camera" or use simulation mode.'
+      const isDenied = lastError?.name === 'NotAllowedError' || lastError?.name === 'PermissionDeniedError';
+      const errMsg = isDenied
+        ? 'Camera permission was not granted. Tap "Allow Camera" or check browser site settings.'
         : lastError?.name === 'NotFoundError' || lastError?.name === 'DevicesNotFoundError'
-        ? 'No camera device found on this system. Simulation mode is active.'
-        : 'Could not access webcam. Simulation mode is ready.';
+        ? 'No camera device found. Simulation mode is active.'
+        : 'Could not connect to camera stream. Simulation mode is ready.';
       setCameraError(errMsg);
+      if (isDenied) {
+        setShowPermissionGuide(true);
+      }
     }
   }, [facingMode]);
 
@@ -608,21 +630,25 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
       {/* Background Live Video / Fallback Feed */}
       <div className="absolute inset-0 w-full h-full overflow-hidden bg-neutral-950">
-        {cameraActive ? (
-          <video
-            ref={videoRef}
-            playsInline
-            autoPlay
-            muted
-            className={`w-full h-full object-cover transition-all duration-300 ${
-              facingMode === 'user' ? '-scale-x-100' : ''
-            } ${nightMode ? 'brightness-125 contrast-110' : ''}`}
-            style={{
-              filter: selectedFilter.canvasFilter || undefined,
-            }}
-          />
-        ) : (
-          <div className="w-full h-full relative">
+        {/* Physical Camera Video Element - Always Mounted for immediate stream attachment */}
+        <video
+          ref={videoRef}
+          playsInline
+          autoPlay
+          muted
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+            facingMode === 'user' ? '-scale-x-100' : ''
+          } ${nightMode ? 'brightness-125 contrast-110' : ''} ${
+            cameraActive ? 'opacity-100 z-0' : 'opacity-0 -z-10 pointer-events-none'
+          }`}
+          style={{
+            filter: selectedFilter.canvasFilter || undefined,
+          }}
+        />
+
+        {/* Fallback Simulation Feed when live webcam is inactive or initializing */}
+        {!cameraActive && (
+          <div className="absolute inset-0 w-full h-full">
             <img
               src={SIMULATION_SCENES[selectedSceneIndex].url}
               alt="Camera Simulation"
@@ -961,6 +987,60 @@ export const CameraView: React.FC<CameraViewProps> = ({
           {isRecording ? 'Recording video... release to finish' : 'Tap for photo • Hold for video • Spacebar'}
         </p>
       </div>
+
+      {/* Camera Permission Guide Modal */}
+      {showPermissionGuide && !cameraActive && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-[#18182e] border border-yellow-400/40 rounded-3xl p-6 max-w-sm w-full shadow-2xl flex flex-col items-center text-center">
+            <div className="w-14 h-14 rounded-2xl bg-yellow-400/10 border border-yellow-400/30 flex items-center justify-center text-yellow-300 mb-4 shadow-inner">
+              <Camera className="w-7 h-7" />
+            </div>
+            
+            <h3 className="text-lg font-bold text-white mb-1 font-['Syne']">
+              Allow Camera Access
+            </h3>
+            
+            <p className="text-xs text-neutral-300 mb-4 leading-relaxed">
+              SnapClone uses your camera to capture live photos, videos, and interactive AR face filters.
+            </p>
+
+            <div className="w-full bg-white/5 rounded-2xl p-3.5 mb-5 text-left border border-white/10 text-[11px] space-y-2 text-neutral-300">
+              <div className="flex items-start gap-2">
+                <span className="w-4 h-4 rounded-full bg-yellow-400/20 text-yellow-300 font-bold flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">1</span>
+                <span>Tap <strong>"Allow Camera"</strong> below and choose <strong>"Allow"</strong> when prompted.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-4 h-4 rounded-full bg-yellow-400/20 text-yellow-300 font-bold flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">2</span>
+                <span>If blocked in browser: tap the 🔒 icon in the address bar &gt; set <strong>Camera: Allow</strong> &gt; Reload.</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col w-full gap-2.5">
+              <button
+                onClick={() => {
+                  playSound('pop');
+                  setShowPermissionGuide(false);
+                  initCamera();
+                }}
+                className="w-full py-3 px-4 rounded-2xl bg-yellow-400 hover:bg-yellow-300 text-black font-extrabold text-sm transition active:scale-95 shadow-lg flex items-center justify-center gap-2"
+              >
+                <Camera className="w-4 h-4" />
+                Allow Camera
+              </button>
+
+              <button
+                onClick={() => {
+                  playSound('tap');
+                  setShowPermissionGuide(false);
+                }}
+                className="w-full py-2.5 px-4 rounded-2xl bg-white/10 hover:bg-white/15 text-white/80 text-xs font-semibold transition active:scale-95 border border-white/10"
+              >
+                Use Simulation Mode Instead
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
